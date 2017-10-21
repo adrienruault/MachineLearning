@@ -3,7 +3,7 @@
 import numpy as np
 
 
-def load_data(sub_sample=True, add_outlier=False):
+def load_data_from_ex02(sub_sample=True, add_outlier=False):
     """Load data and convert it to the metrics system."""
     path_dataset = "height_weight_genders.csv"
     data = np.genfromtxt(
@@ -72,3 +72,11 @@ def batch_iter(y, tx, batch_size, num_batches=1, shuffle=True):
         end_index = min((batch_num + 1) * batch_size, data_size)
         if start_index != end_index:
             yield shuffled_y[start_index:end_index], shuffled_tx[start_index:end_index]
+
+
+
+
+
+
+
+
