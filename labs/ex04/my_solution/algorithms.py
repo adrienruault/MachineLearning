@@ -19,17 +19,18 @@ def compute_loss(y, tx, w, cost = "mse", lambda_ = 0):
     N = tx.shape[0]
     error_vec = y - tx.dot(w)
     if (cost == "mse"):
-        loss = (1 / (2*N)) * np.linalg.norm(error_vec)**2
+        return (1 / (2*N)) * np.linalg.norm(error_vec)**2
     elif (cost == "mae"):
-        loss = (1 / N) * np.sum(np.abs(error_vec))
+        return (1 / N) * np.sum(np.abs(error_vec))
     elif (cost == "ridge"):
-        loss = (1 / (2*N)) * np.linalg.norm(y - tx.dot(w))**2 + lambda_ * np.linalg.norm(w)**2
+        return (1 / (2*N)) * np.linalg.norm(y - tx.dot(w))**2 + lambda_ * np.linalg.norm(w)**2
     elif (cost == "logistic"):
-        loss = np.sum(np.log(1 + np.exp(tx.dot(w))) - y * tx.dot(w))
+        return np.sum(np.log(1 + np.exp(tx.dot(w))) - y * tx.dot(w))
+    elif (cost == "reg_logistic"):
+        return np.sum(np.log(1 + np.exp(tx.dot(w))) - tx.dot(w) * y) + (lambda_ / 2) * np.linalg.norm(w)**2
     else:
-        print("Invalid cost argument in compute_loss")
-        raise IllegalArgument
-    return loss
+        raise IllegalArgument("Invalid cost argument in compute_loss")
+    return 0
 
 
 
@@ -54,46 +55,52 @@ def grid_search(y, tx, w0, w1):
 
 
 
-def compute_gradient(y, tx, w, cost = "mse"):
+def compute_gradient(y, tx, w, cost = "mse", lambda_ = 0):
     """Compute the gradient."""
     N = tx.shape[0];
     error_vec = y - tx.dot(w)
     if (cost == "mse"):
-        grad = -(1/N) * np.transpose(tx).dot(error_vec)
+        return -(1/N) * np.transpose(tx).dot(error_vec)
     elif (cost == "mae"):
         # Note that here it is not a gradient strictly speaking because the mae is not differentiable everywhere
         sub_grad = [0 if error_vec[i] == 0 else error_vec[i] / np.abs(error_vec[i]) for i in range(N)]
-        grad = -(1 / N) * np.transpose(tx).dot(sub_grad)
+        return -(1 / N) * np.transpose(tx).dot(sub_grad)
     elif (cost == "logistic"):
         try:
             w.shape[1]
         except IndexError:
             w = np.expand_dims(w, 1)
-        grad = np.transpose(tx).dot(sigmoid(tx.dot(w)) - y)
+        return np.transpose(tx).dot(sigmoid(tx.dot(w)) - y)
+    elif (cost == "reg_logistic"):
+        try:
+            w.shape[1]
+        except IndexError:
+            w = np.expand_dims(w, 1)
+        return np.transpose(tx).dot(sigmoid(tx.dot(w)) - y) + lambda_ * w
     else:
-        print("Invalid argument in compute_gradient function.")
-        raise IllegalArgument
-    return grad
+        raise IllegalArgument("Invalid cost argument in compute_gradient function.")
+    return 0
 
 
 
 
 # Be careful, gamma of 2 for MSE doesn't converge
-def gradient_descent(y, tx, initial_w, max_iters, gamma, cost ="mse", tol = 1e-6, thresh_test_conv = 10):
+def gradient_descent(y, tx, initial_w, max_iters, gamma, cost ="mse", lambda_ = 0, tol = 1e-6, thresh_test_conv = 10, update_gamma = False):
     """Gradient descent algorithm."""
-    if (cost not in ["mse", "mae", "logistic"]):
-        raise IllegalArgument
+    if (cost not in ["mse", "mae", "logistic", "reg_logistic"]):
+        raise IllegalArgument("Invalid cost argument in gradient_descent function")
     
     # ensure that w_initial is formatted in the right way if implementing logistic regression
-    if (cost == "logistic"):
+    if (cost == "logistic" or cost == "reg_logistic"):
         try:
             initial_w.shape[1]
         except IndexError:
             initial_w = np.expand_dims(initial_w, 1)
+    
         
     # Define parameters to store w and loss
     ws = [initial_w]
-    initial_loss = compute_loss(y, tx, initial_w, cost)
+    initial_loss = compute_loss(y, tx, initial_w, cost = cost, lambda_ = lambda_)
     losses = [initial_loss]
     w = initial_w
     test_conv = 0
@@ -101,15 +108,14 @@ def gradient_descent(y, tx, initial_w, max_iters, gamma, cost ="mse", tol = 1e-6
     n_iter = 0;
     
     while (n_iter < max_iters and dist_succ_loss > tol):
-        grad = compute_gradient(y, tx, w, cost)
-        loss = compute_loss(y, tx, w, cost)
+        grad = compute_gradient(y, tx, w, cost = cost, lambda_ = lambda_)
         
         # updating w
         w = w - gamma * grad
-        loss = compute_loss(y, tx, w, cost)
+        loss = compute_loss(y, tx, w, cost = cost, lambda_ = lambda_)
         
         # Test of divergence, test_conv counts the number of consecutive iterations for which loss has increased
-        if (loss > losses[n_iter]):
+        if (loss > losses[-1]):
             test_conv += 1
             if (test_conv >= thresh_test_conv):
                 print("Stopped computing because 10 consecutive iterations have involved an increase in loss.")
@@ -120,19 +126,23 @@ def gradient_descent(y, tx, initial_w, max_iters, gamma, cost ="mse", tol = 1e-6
         # store w and loss
         ws.append(w)
         losses.append(loss)
-        #print("loss:", losses)
      
         # update distance between two successive w
         dist_succ_loss = np.abs(losses[-1] - losses[-2])
-        #print(dist_succ_loss)
         
         # update n_iter: number of iterations
         n_iter += 1
+        
+        # update gamma if update_gamma is True
+        if (update_gamma == True):
+            gamma = 1 / (1 + n_iter) * gamma
+    
+    # Printing the results
     try:
         initial_w.shape[1]
         print("Gradient Descent({bi}/{ti}): loss={l}, w0={w0}, w1={w1}, cost: {cost}".format(
               bi=n_iter-1, ti=max_iters - 1, l=loss, w0=w[0,0], w1=w[1,0], cost = cost))
-    except IndexError:
+    except (IndexError, AttributeError):
         print("Gradient Descent({bi}/{ti}): loss={l}, w0={w0}, w1={w1}, cost: {cost}".format(
                   bi=n_iter-1, ti=max_iters - 1, l=loss, w0=w[0], w1=w[1], cost = cost))
     return losses, ws
@@ -155,8 +165,7 @@ def compute_stoch_gradient(y, tx, w, batch_size=1, cost ="mse"):
         sub_grad_abs = [0 if error_vec[i] == 0 else error_vec[i] / np.abs(error_vec[i]) for i in range(batch_size)]
         stoch_grad = -(1 / batch_size) * np.transpose(tx_b).dot(sub_grad_abs)
     else:
-        print("Invalid cost argument in compute_stoch_gradient")
-        raise IllegalArgument
+        raise IllegalArgument("Invalid cost argument in compute_stoch_gradient")
     
     return stoch_grad
 
@@ -480,6 +489,92 @@ def sigmoid(t):
 
 
 
+def compute_hessian(y, tx, w, cost = "mse", lambda_ = 0):
+    N = tx.shape[0]
+    if (cost == "mse"):
+        return (1 / N) * np.transpose(tx).dot(tx)
+    elif (cost == "logistic"):
+        S_diag = sigmoid(tx.dot(w)) * (1 - sigmoid(tx.dot(w)))
+        S = np.diag(np.squeeze(S_diag))
+        return np.transpose(tx).dot(S).dot(tx)
+    elif (cost == "reg_logistic"):
+        D = tx.shape[1]
+        S_diag = sigmoid(tx.dot(w))
+        S = np.diag(np.squeeze(S_diag))
+        return np.transpose(tx).dot(S).dot(tx) + np.identity(D) * lambda_
+    else:
+        raise IllegalArgument("Invalid cost argument in compute_hessian")
+    return 0
+
+
+
+
+def newton(y, tx, initial_w, max_iters, gamma, cost ="mse", lambda_ = 0, tol = 1e-6, thresh_test_conv = 10, update_gamma = False):
+    """Gradient descent algorithm."""
+    if (cost not in ["mse", "logistic", "reg_logistic"]):
+        raise IllegalArgument("Invalid cost argument in gradient_descent function")
+    
+    # ensure that w_initial is formatted in the right way if implementing logistic regression
+    if (cost == "logistic" or cost == "reg_logistic"):
+        try:
+            initial_w.shape[1]
+        except IndexError:
+            initial_w = np.expand_dims(initial_w, 1)
+    
+        
+    # Define parameters to store w and loss
+    ws = [initial_w]
+    initial_loss = compute_loss(y, tx, initial_w, cost = cost, lambda_ = lambda_)
+    losses = [initial_loss]
+    w = initial_w
+    test_conv = 0
+    dist_succ_loss = tol + 1
+    n_iter = 0;
+    
+    while (n_iter < max_iters and dist_succ_loss > tol):
+        grad = compute_gradient(y, tx, w, cost = cost, lambda_ = lambda_)
+        hess = compute_hessian(y, tx, w, cost = cost)
+        
+        # updating w
+        z = np.linalg.solve(hess, -gamma * grad)
+        w = z + w
+        loss = compute_loss(y, tx, w, cost = cost, lambda_ = lambda_)
+        
+        # Test of divergence, test_conv counts the number of consecutive iterations for which loss has increased
+        if (loss > losses[-1]):
+            test_conv += 1
+            if (test_conv >= thresh_test_conv):
+                print("Stopped computing because 10 consecutive iterations have involved an increase in loss.")
+                return losses, ws
+        else:
+            test_conv = 0
+
+        # store w and loss
+        ws.append(w)
+        losses.append(loss)
+     
+        # update distance between two successive w
+        dist_succ_loss = np.abs(losses[-1] - losses[-2])
+        
+        # update n_iter: number of iterations
+        n_iter += 1
+        
+        # update gamma if update_gamma is True
+        if (update_gamma == True):
+            gamma = 1 / (1 + n_iter) * gamma
+    
+    # Printing the results
+    try:
+        initial_w.shape[1]
+        print("Newton({bi}/{ti}): loss={l}, w0={w0}, w1={w1}, cost: {cost}".format(
+              bi=n_iter-1, ti=max_iters - 1, l=loss, w0=w[0,0], w1=w[1,0], cost = cost))
+    except (IndexError, AttributeError):
+        print("Newton({bi}/{ti}): loss={l}, w0={w0}, w1={w1}, cost: {cost}".format(
+                  bi=n_iter-1, ti=max_iters - 1, l=loss, w0=w[0], w1=w[1], cost = cost))
+    return losses, ws
+
+
+
 
 
 
@@ -504,7 +599,7 @@ def test_ls_grid_GD_SGD():
     w1_grid_test = np.linspace(-100, 100, 100)
     grid_loss, grid_w = grid_search(y, tx, w0_grid_test, w1_grid_test)
     
-    initial_w = [0, 0]
+    initial_w = np.array([0, 0])
     gamma_GD = 0.7
     gamma_GD_mae = 10
     max_iters = 500
@@ -534,7 +629,7 @@ def test_ls_grid_GD_SGD():
 
 
 # functions to test test_ls_grid_GD_SGD
-def load_data_from_ex02(sub_sample=True, add_outlier=False):
+def load_data_from_ex02(sub_sample=False, add_outlier=False):
     """Load data and convert it to the metrics system."""
     path_dataset = "height_weight_genders.csv"
     data = np.genfromtxt(
@@ -562,9 +657,9 @@ def load_data_from_ex02(sub_sample=True, add_outlier=False):
 
 def standardize(x):
     """Standardize the original data set."""
-    mean_x = np.mean(x)
+    mean_x = np.mean(x, axis=0)
     x = x - mean_x
-    std_x = np.std(x)
+    std_x = np.std(x, axis=0)
     x = x / std_x
     return x, mean_x, std_x
 
@@ -611,3 +706,61 @@ def train_test_split_demo(x, y, degree, ratio, seed):
           p=ratio, d=degree, tr=rmse_tr, te=rmse_te))
 
 
+    
+    
+    
+    
+def test_newton_gradient_descent_reg_logistic():
+    # load data.
+    height, weight, gender = load_data_from_ex02()
+
+    # build sampled x and y.
+    seed = 1
+    y = np.expand_dims(gender, axis=1)
+    X = np.c_[height.reshape(-1), weight.reshape(-1)]
+    y, X = sample_data(y, X, seed, size_samples=200)
+    x, mean_x, std_x = standardize(X)
+    
+    print(y.shape)
+    print(x.shape)
+    
+    max_iter = 10000
+    gamma_gd = 0.01
+    gamma_newt = 4.5
+    lambda_ = 0.1
+    threshold = 1e-8
+
+    # build tx
+    tx = np.c_[np.ones((y.shape[0], 1)), x]
+    
+    initial_w = np.zeros((tx.shape[1], 1))
+    
+    loss, w = gradient_descent(y, tx, initial_w, max_iter, gamma_gd, cost='reg_logistic', lambda_=lambda_, tol=threshold, thresh_test_conv=10, update_gamma=False)
+    
+    loss, w = newton(y, tx, initial_w, max_iter, gamma_newt, cost='reg_logistic', lambda_=lambda_, tol=threshold, thresh_test_conv=10, update_gamma=False)
+    
+    return 0
+    
+    
+    
+    
+    
+def sample_data(y, x, seed, size_samples):
+    """sample from dataset."""
+    np.random.seed(seed)
+    num_observations = y.shape[0]
+    random_permuted_indices = np.random.permutation(num_observations)
+    y = y[random_permuted_indices]
+    x = x[random_permuted_indices]
+    return y[:size_samples], x[:size_samples]
+    
+    
+    
+    
+    
+    
+    
+# EXCEPTIONS ##################################################################################################################
+    
+class IllegalArgument(Exception):
+    pass
