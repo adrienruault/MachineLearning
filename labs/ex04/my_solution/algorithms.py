@@ -17,11 +17,10 @@ def compute_loss(y, tx, w, cost = "mse", lambda_ = 0):
     You can calculate the loss using mse or mae.
     """
     N = tx.shape[0]
-    error_vec = y - tx.dot(w)
     if (cost == "mse"):
-        return (1 / (2*N)) * np.linalg.norm(error_vec)**2
+        return (1 / (2*N)) * np.linalg.norm(y - tx.dot(w))**2
     elif (cost == "mae"):
-        return (1 / N) * np.sum(np.abs(error_vec))
+        return (1 / N) * np.sum(np.abs(y - tx.dot(w)))
     elif (cost == "ridge"):
         return (1 / (2*N)) * np.linalg.norm(y - tx.dot(w))**2 + lambda_ * np.linalg.norm(w)**2
     elif (cost == "logistic"):
@@ -58,13 +57,15 @@ def grid_search(y, tx, w0, w1):
 def compute_gradient(y, tx, w, cost = "mse", lambda_ = 0):
     """Compute the gradient."""
     N = tx.shape[0];
-    error_vec = y - tx.dot(w)
     if (cost == "mse"):
-        return -(1/N) * np.transpose(tx).dot(error_vec)
+        return -(1/N) * np.transpose(tx).dot(y - tx.dot(w))
     elif (cost == "mae"):
         # Note that here it is not a gradient strictly speaking because the mae is not differentiable everywhere
+        error_vec = y - tx.dot(w)
         sub_grad = [0 if error_vec[i] == 0 else error_vec[i] / np.abs(error_vec[i]) for i in range(N)]
         return -(1 / N) * np.transpose(tx).dot(sub_grad)
+    elif (cost == "ridge"):
+        return -(1/N) * np.transpose(tx).dot(y - tx.dot(w)) + 2 * lambda_ * w
     elif (cost == "logistic"):
         try:
             w.shape[1]
@@ -85,10 +86,14 @@ def compute_gradient(y, tx, w, cost = "mse", lambda_ = 0):
 
 
 # Be careful, gamma of 2 for MSE doesn't converge
-def gradient_descent(y, tx, initial_w, max_iters, gamma, cost ="mse", lambda_ = 0, tol = 1e-6, thresh_test_conv = 10, update_gamma = False):
+def gradient_descent(y, tx, initial_w, max_iters, gamma, cost ="mse", lambda_ = 0, tol = 1e-6, thresh_test_div = 10, update_gamma = False):
     """Gradient descent algorithm."""
-    if (cost not in ["mse", "mae", "logistic", "reg_logistic"]):
+    if (cost not in ["mse", "mae", "logistic", "reg_logistic", "ridge"]):
         raise IllegalArgument("Invalid cost argument in gradient_descent function")
+    
+    # convert w to a numpy array if it is passed as a list
+    if (type(initial_w) != np.ndarray):
+        initial_w = np.array(initial_w)
     
     # ensure that w_initial is formatted in the right way if implementing logistic regression
     if (cost == "logistic" or cost == "reg_logistic"):
@@ -99,53 +104,53 @@ def gradient_descent(y, tx, initial_w, max_iters, gamma, cost ="mse", lambda_ = 
     
         
     # Define parameters to store w and loss
-    ws = [initial_w]
-    initial_loss = compute_loss(y, tx, initial_w, cost = cost, lambda_ = lambda_)
-    losses = [initial_loss]
-    w = initial_w
-    test_conv = 0
+    loss_k = compute_loss(y, tx, initial_w, cost = cost, lambda_ = lambda_)
+    w_k = initial_w
+    
+    # test_div is an integer that is incremented for each consecutive increase in loss.
+    # If test_div reaches thresh_test_div the programm stops and divergence is assumed
+    test_div = 0
     dist_succ_loss = tol + 1
     n_iter = 0;
     
     while (n_iter < max_iters and dist_succ_loss > tol):
-        grad = compute_gradient(y, tx, w, cost = cost, lambda_ = lambda_)
+        grad = compute_gradient(y, tx, w_k, cost = cost, lambda_ = lambda_)
         
         # updating w
-        w = w - gamma * grad
-        loss = compute_loss(y, tx, w, cost = cost, lambda_ = lambda_)
+        w_kp1 = w_k - gamma * grad
+        loss_kp1 = compute_loss(y, tx, w_kp1, cost = cost, lambda_ = lambda_)
         
         # Test of divergence, test_conv counts the number of consecutive iterations for which loss has increased
-        if (loss > losses[-1]):
-            test_conv += 1
-            if (test_conv >= thresh_test_conv):
+        if (loss_kp1 > loss_k):
+            test_div += 1
+            if (test_div >= thresh_test_div):
                 print("Stopped computing because 10 consecutive iterations have involved an increase in loss.")
                 return losses, ws
         else:
-            test_conv = 0
-
-        # store w and loss
-        ws.append(w)
-        losses.append(loss)
+            test_div = 0
      
         # update distance between two successive w
-        dist_succ_loss = np.abs(losses[-1] - losses[-2])
+        dist_succ_loss = np.abs(loss_kp1 - loss_k)
         
         # update n_iter: number of iterations
         n_iter += 1
         
+        w_k = w_kp1
+        loss_k = loss_kp1
+        
         # update gamma if update_gamma is True
         if (update_gamma == True):
-            gamma = 1 / (1 + n_iter) * gamma
+            gamma = (1 / (1 + n_iter)) * gamma
     
     # Printing the results
     try:
         initial_w.shape[1]
-        print("Gradient Descent({bi}/{ti}): loss={l}, w0={w0}, w1={w1}, cost: {cost}".format(
-              bi=n_iter-1, ti=max_iters - 1, l=loss, w0=w[0,0], w1=w[1,0], cost = cost))
+        print("GD({bi}/{ti}), cost: {cost}: loss={l}, w={w}".format(
+              bi=n_iter-1, ti=max_iters - 1, cost = cost, l=loss_k, w=w_k[:,0]))
     except (IndexError, AttributeError):
-        print("Gradient Descent({bi}/{ti}): loss={l}, w0={w0}, w1={w1}, cost: {cost}".format(
-                  bi=n_iter-1, ti=max_iters - 1, l=loss, w0=w[0], w1=w[1], cost = cost))
-    return losses, ws
+        print("GD({bi}/{ti}), cost: {cost}: loss={l}, w={w}".format(
+                  bi=n_iter-1, ti=max_iters - 1, cost = cost, l=loss_k, w=w_k))
+    return w_k, loss_k
 
 
 
@@ -157,17 +162,17 @@ def compute_stoch_gradient(y, tx, w, batch_size=1, cost ="mse"):
     batched = [x for x in batch_iter(y, tx, batch_size)][0]
     y_b = batched[0]
     tx_b = batched[1]
-    error_vec = y_b - tx_b.dot(w)
 
     if (cost == "mse"):
-        stoch_grad = (-2 / batch_size) * np.transpose(tx_b).dot(error_vec)
+        return(-1 / batch_size) * np.transpose(tx_b).dot(y_b - tx_b.dot(w))
     elif (cost == "mae"):
+        error_vec = y_b - tx_b.dot(w)
         sub_grad_abs = [0 if error_vec[i] == 0 else error_vec[i] / np.abs(error_vec[i]) for i in range(batch_size)]
-        stoch_grad = -(1 / batch_size) * np.transpose(tx_b).dot(sub_grad_abs)
+        return -(1 / batch_size) * np.transpose(tx_b).dot(sub_grad_abs)
     else:
         raise IllegalArgument("Invalid cost argument in compute_stoch_gradient")
     
-    return stoch_grad
+    return 0
 
 
 # batxh_iter is used to sample the training data used to compute the stochastic gradient
@@ -200,45 +205,63 @@ def batch_iter(y, tx, batch_size, num_batches=1, shuffle=True):
 
 
 def stochastic_gradient_descent(
-        y, tx, initial_w, batch_size, max_iters, gamma, cost = "mse", tol = 1e-6, thresh_test_conv = 100):
+        y, tx, initial_w, batch_size, max_iters, gamma, cost = "mse", tol = 1e-6, thresh_test_div = 100, update_gamma = False):
+    
+    if (cost not in ["mse", "mae"]):
+        raise IllegalArgument("Invalid cost argument in stochastic_gradient_descent function")
+    
+    # convert w to a numpy array if it is passed as a list
+    if (type(initial_w) != np.ndarray):
+        initial_w = np.array(initial_w)
+    
     # Define parameters to store w and loss
-    ws = [initial_w]
-    initial_loss = compute_loss(y, tx, initial_w, cost)
-    losses = [initial_loss]
-    w = initial_w
-    test_conv = 0
+    w_k = initial_w
+    loss_k = compute_loss(y, tx, w_k, cost)
+    
+    # test_conv is an integer that is incremented for each consecutive increase in loss.
+    # If test_conv reaches thresh_test_div the programm stops and divergence is assumed
+    test_div = 0
+    
     dist_succ_w = tol + 1
     n_iter = 0
     while (n_iter < max_iters and dist_succ_w > tol):
-        stoch_grad = compute_stoch_gradient(y, tx, w, batch_size, cost)
-        loss = compute_loss(y, tx, w, cost)
+        stoch_grad = compute_stoch_gradient(y, tx, w_k, batch_size, cost)
+        
+        # updating w
+        w_kp1 = w_k - gamma * stoch_grad
+        loss_kp1 = compute_loss(y, tx, w_kp1, cost)
         
         # Test of convergence, test_conv counts the number of consecutive iterations for which loss has increased
-        if (loss > losses[n_iter]):
-            test_conv += 1
-            if (test_conv == thresh_test_conv):
+        if (loss_kp1 > loss_k):
+            test_div += 1
+            if (test_div == thresh_test_div):
                 print("Stopped computing because 10 consecutive iterations have involved an increase in loss.")
                 return losses, ws
         else:
-            test_conv = 0
-        
-        # updating w
-        w = w - gamma * stoch_grad
-        
-        # store w and loss
-        ws.append(w)
-        losses.append(loss)
+            test_div = 0
         
         # computing distance between new w and former one
-        dist_succ_w = np.linalg.norm(ws[len(ws)-1] - ws[len(ws)-2])
+        dist_succ_w = np.linalg.norm(loss_kp1 - loss_k)
+        
+        w_k = w_kp1
+        loss_k = loss_kp1
         
         # updating the number of iteration
         n_iter += 1
+        
+        # update gamma if update_gamma is True
+        if (update_gamma == True):
+            gamma = (1 / (1 + n_iter)) * gamma
 
-    print("Gradient Descent({bi}/{ti}): loss={l}, w0={w0}, w1={w1}, cost: {cost}".format(
-              bi=n_iter-1, ti=max_iters - 1, l=loss, w0=w[0], w1=w[1], cost = cost))
+    try:
+        initial_w.shape[1]
+        print("SGD({bi}/{ti}), cost: {cost}: loss={l}, w={w}".format(
+              bi=n_iter-1, ti=max_iters - 1, cost = cost, l=loss_k, w=w_k[:,0]))
+    except (IndexError, AttributeError):
+        print("SGD({bi}/{ti}), cost: {cost}: loss={l}, w={w}".format(
+                  bi=n_iter-1, ti=max_iters - 1, cost = cost, l=loss_k, w=w_k))
     
-    return losses, ws
+    return w_k, loss_k
 
 
 
@@ -252,7 +275,7 @@ def least_squares(y, tx):
     w = np.linalg.solve(np.transpose(tx).dot(tx), np.transpose(tx).dot(y))
     loss = (1 / (2*N)) * np.linalg.norm(y - tx.dot(w))**2
     
-    return loss, w
+    return w, loss
 
 
 
@@ -321,7 +344,7 @@ def ridge_regression(y, tx, lambda_):
     w = np.linalg.solve(np.transpose(tx).dot(tx) + lambda_prime * I, np.transpose(tx).dot(y))
     loss = (1 / (2*N)) * np.linalg.norm(y - tx.dot(w))**2 + lambda_ * np.linalg.norm(w)**2
     #loss = (1 / (2*N)) * np.linalg.norm(y - tx.dot(w))**2 + lambda_ * np.linalg.norm(w)**2
-    return loss, w
+    return w, loss
 
 
 
